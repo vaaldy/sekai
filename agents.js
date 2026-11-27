@@ -38,10 +38,13 @@ export const agentMethods = {
       return false;
     }
     const agent = request.action === "open" ? this.localAgents().find(a => a.address === request.terminal) : null;
-    if (request.action !== "return" && !agent) return false;
+    if (request.action === "git" && changes) return false;
+    if (request.action !== "return" && request.action !== "git" && !agent) return false;
+    if (request.action === "git" && !this.lastAgentTerminal) return false;
     if (current) { closeOverlay(current.id); this.terminalDialog = null; }
     if (changes) { closeOverlay(changes.id); this.changesDialog = null; }
     if (agent) this.openAgent(agent, cx);
+    else if (request.action === "git") { this.openChanges(); cx.notify(); }
     else { this.focusAttempts = 1; cx.notify(); }
     return true;
   },
@@ -93,9 +96,12 @@ export const agentMethods = {
   pickerKey(e, cx) {
     if (e.modifiers?.control || e.modifiers?.alt || e.modifiers?.platform) return;
     const list = this.localAgents();
-    if (["escape", "q", "e", "enter", "up", "down", "w", "s"].includes(e.key) || /^[1-9]$/.test(e.key)) {
+    if (["escape", "q", "g", "e", "enter", "up", "down", "w", "s"].includes(e.key) || /^[1-9]$/.test(e.key)) {
       cx.stop_propagation();
-      if (e.key === "escape" || (e.key === "q" && !this.picker)) {
+      if (e.key === "g" && !e.is_held) {
+        if (this.picker) { this.pickerAction = { action: "git" }; closeOverlay(props().overlay); }
+        else { this.choosingAgent = false; this.activate({ action: "changes" }, cx); }
+      } else if (e.key === "escape" || (e.key === "q" && !this.picker)) {
         if (this.picker) closeOverlay(props().overlay);
         else this.choosingAgent = false;
       } else if (e.key === "q" && this.picker) {
@@ -116,6 +122,8 @@ export const agentMethods = {
         .bg(i === Math.min(this.agentIndex,list.length-1) ? "#50638b" : "#293655").cursor_pointer()
         .on_click((_e,cx) => this.chooseAgent(agent,cx)).child(`${i < 9 ? `${i+1}  ` : ""}${agent.tab_name} / ${agent.pane_name || agent.app || agent.title} · ${agent.status}`))))
       .when(!list.length, el => el.child("No agents in this workspace"))
-      .child(div().id("return-world").cursor_pointer().on_click((_e,cx) => this.pickerKey({ key: "q" }, cx)).child("Q · RETURN TO WORLD"));
+      .child(div().flex().justify_between()
+        .child(div().id("open-git").cursor_pointer().on_click((_e,cx) => this.pickerKey({ key: "g" }, cx)).child("G · GIT"))
+        .child(div().id("return-world").cursor_pointer().on_click((_e,cx) => this.pickerKey({ key: "q" }, cx)).child("Q · RETURN TO WORLD")));
   }
 };

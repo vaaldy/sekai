@@ -34,10 +34,7 @@ export const world = {
     } else if (gate.action === "changes" && this.lastAgentTerminal) {
       this.bindIdentity(focused(), true);
       if (!this.pane || focused()?.pane !== this.pane) return;
-      const origin = { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId, session: `${this.instanceId}-${Date.now()}-${Math.random()}`, terminal: this.lastAgentTerminal };
-      const id = openOverlay({ mod: "sekai-changes", kind: "dialog", width: 0.78, height: 0.8, props: { terminal: this.lastAgentTerminal, origin } });
-      this.changesDialog = { ...origin, id };
-      setShared("sekai.changesOverlay", this.changesDialog);
+      this.openChanges();
     } else {
       const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
       if (panel && body && find(body, gate.action)) {
@@ -49,6 +46,13 @@ export const world = {
       } else run("mod.open", { name: gate.action });
     }
     cx.notify();
+  },
+
+  openChanges() {
+    const origin = { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId, session: `${this.instanceId}-${Date.now()}-${Math.random()}`, terminal: this.lastAgentTerminal };
+    const id = openOverlay({ mod: "sekai-changes", kind: "dialog", width: 0.78, height: 0.8, props: { terminal: this.lastAgentTerminal, origin } });
+    this.changesDialog = { ...origin, id };
+    setShared("sekai.changesOverlay", this.changesDialog);
   },
 
   renderWorld() {

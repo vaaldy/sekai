@@ -8,6 +8,7 @@ export const sekaiAssetCatalog = {
   "atmosphere.mist": { path: "assets/forest-mist.png", size: [660,88], transparent: true },
   "terrain.snow-stone": { path: terrain+"snow-stone.png", size: [32,5], transparent: false, tile: true },
   "terrain.timber": { path: terrain+"timber.png", size: [32,5], transparent: false, tile: true },
+  "terrain.dirt-ground": { path: terrain+"dirt-ground.png", size: [64,14], transparent: false, tile: true },
   "building.cottage": { path: terrain+"cottage.png", size: [244,146], transparent: true },
   "furniture.workbench": { path: terrain+"workbench.png", size: [37,24], transparent: true },
   "furniture.bookshelf": { path: terrain+"bookshelf.png", size: [24,30], transparent: true },
@@ -17,6 +18,15 @@ export const sekaiAssetCatalog = {
   "portal.git": { path: terrain+"changes.png", size: [20,18], transparent: true },
   "portal.files": { path: terrain+"files.png", size: [20,18], transparent: true },
   "portal.command": { path: terrain+"command-block.png", size: [20,18], transparent: true },
+  "portal.chest": { path: terrain+"storage-chest.png", size: [20,18], transparent: true },
+  "item.blade": { path: terrain+"item-blade.png", size: [12,12], transparent: true },
+  "item.lantern": { path: terrain+"item-lantern.png", size: [12,12], transparent: true },
+  "item.feather": { path: terrain+"item-feather.png", size: [12,12], transparent: true },
+  "item.cloak": { path: terrain+"item-cloak.png", size: [12,12], transparent: true },
+  "item.pickaxe": { path: terrain+"item-pickaxe.png", size: [12,12], transparent: true },
+  "item.timber": { path: terrain+"item-timber.png", size: [12,12], transparent: true },
+  "item.stone": { path: terrain+"item-stone.png", size: [12,12], transparent: true },
+  "item.berry": { path: terrain+"item-berry.png", size: [12,12], transparent: true },
 };
 export const sekaiFrames = { idle: 1, run: 4, jump: 2, fall: 2, dash: 2 };
 for (const [pose,count] of Object.entries(sekaiFrames)) for (const side of ["left","right"]) for (let frame=0;frame<count;frame++) {
@@ -29,8 +39,11 @@ for (const side of ["left","right"]) for (let frame=0;frame<4;frame++) {
 for (const period of ["dawn","day","dusk","night"]) for (let frame=0;frame<2;frame++) {
   sekaiAssetCatalog[`wildlife.bird.${period}.${frame}`] = { path: `${terrain}bird-${period}-${frame}.png`, size:[14,10], transparent:true };
 }
+for (const kind of ["swing","pick"]) for (const side of ["left","right"]) for (let frame=0;frame<4;frame++) {
+  sekaiAssetCatalog[`fx.${kind}.${side}.${frame}`] = { path: `${terrain}${kind}-${side}-${frame}.png`, size:[24,24], transparent:true };
+}
 
-const ledge = (id,a,b,y,asset="terrain.snow-stone") => ({id,kind:"platform",asset,x:a,y,w:b-a,h:5,collision:"one-way"});
+const ledge = (id,a,b,y,asset="terrain.snow-stone",h=5) => ({id,kind:"platform",asset,x:a,y,w:b-a,h,collision:"one-way"});
 const decoration = (id,asset,x,y,w,h) => ({id,kind:"decoration",asset,x,y,w,h,collision:"none"});
 const door = (id,side,x,y) => ({id,kind:"decoration",asset:`building.door.${side}.0`,frames:[0,1,2,3].map(i=>`building.door.${side}.${i}`),x,y,w:9,h:25,collision:"none"});
 const portal = (id,asset,title,action,x,y) => ({id,kind:"portal",asset,title,action,x:x-10,y:y-18,w:20,h:18,collision:"none"});
@@ -40,7 +53,7 @@ export const sekaiWorldDefinition = {
   atmosphere: { mist: "atmosphere.mist" },
   vista: { id:"cottage-balcony", x:755, y:238, w:70, tolerance:5, zoom:.73, target:[650,220] },
   objects: [
-    ledge("ground",0,960,346), ledge("central-low",445,505,310), ledge("central-left",384,437,277), ledge("cottage-approach",498,524,290),
+    ledge("ground",0,960,346,"terrain.dirt-ground",14), ledge("central-low",445,505,310), ledge("central-left",384,437,277), ledge("cottage-approach",498,524,290),
     ledge("central-west",332,397,244), ledge("central-high",459,494,242), ledge("central-west-high",371,432,202), ledge("cottage-roof-left",535,558,202),
     ledge("west-low",236,312,309), ledge("west-gap",168,219,274), ledge("west-mid",258,296,240), ledge("west-high",302,349,202), ledge("west-ridge",225,276,166),
     ledge("west-shelf",136,192,140), ledge("west-peak-low",75,112,105), ledge("west-peak",151,203,72),
@@ -56,6 +69,7 @@ export const sekaiWorldDefinition = {
     portal("workspace-portal","portal.workspaces","WORKSPACES","spaces",565,346),
     portal("file-library","portal.files","FILES","files",628,346),
     portal("agent-chest","portal.agents","TABS / AGENTS","tabs",690,346),
+    portal("cottage-stash","portal.chest","STASH","chest",580,310),
     portal("git-workshop","portal.git","GIT","changes",690,310),
     portal("command-block","portal.command","COMMAND","command",800,346),
   ]
@@ -77,7 +91,7 @@ export function validateSekaiWorld(definition, catalog = sekaiAssetCatalog) {
     if (!asset || !asset.path || !Array.isArray(asset.size) || asset.size.length!==2 || !asset.size.every(n=>Number.isFinite(n)&&n>0) || typeof asset.transparent!=="boolean") fail(`asset: ${object.asset}`);
     if (![object.x,object.y,object.w,object.h].every(Number.isFinite) || object.x<0 || object.y<0 || object.w<=0 || object.h<=0 || object.x+object.w>width || object.y+object.h>height) fail(`bounds: ${object.id}`);
     if (object.kind === "platform") { if (object.collision!=="one-way" || !asset.tile) fail(`platform: ${object.id}`); }
-    else if (object.kind === "portal") { if (object.collision!=="none" || !["spaces","tabs","changes","files","command"].includes(object.action) || !object.title) fail(`portal: ${object.id}`); }
+    else if (object.kind === "portal") { if (object.collision!=="none" || !["spaces","tabs","changes","files","command","chest"].includes(object.action) || !object.title) fail(`portal: ${object.id}`); }
     else if (object.kind !== "decoration" || object.collision !== "none") fail(`kind or collision: ${object.id}`);
     if (object.frames !== undefined && (!Array.isArray(object.frames) || !object.frames.length || object.frames.some(id=>!catalog[id]))) fail(`frames: ${object.id}`);
   }

@@ -5,6 +5,7 @@ import { sekaiWorldDefinition } from "./world-data.js";
 import { player } from "./player.js";
 import { agentMethods } from "./agents.js";
 import { identity } from "./identity.js";
+import { inventoryMethods } from "./inventory.js";
 
 export default class Sekai extends View {
   init(_props, cx) {
@@ -28,6 +29,7 @@ export default class Sekai extends View {
     this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.pane = props()?.pane;
     this.worldId = props()?.worldId;
+    this.loadStash();
     this.wasActive = false;
     this.dayStart = Date.now() - Math.round(DAY_MS * 0.28);
     if (checking()) return;
@@ -55,4 +57,4 @@ export default class Sekai extends View {
 }
 
 const { close, ...agentInteractions } = agentMethods;
-Object.assign(Sekai.prototype, world, player, identity, agentInteractions);
+Object.assign(Sekai.prototype, world, player, identity, agentInteractions, inventoryMethods);

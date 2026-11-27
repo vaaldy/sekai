@@ -72,6 +72,9 @@ export const world = {
       openOverlay({ mod: "tab-prefix", kind: "dialog", width: 320, props: { mode: "workspace" } });
     } else if (gate.action === "tabs") {
       this.choosingAgent = !this.choosingAgent; this.agentIndex = 0;
+    } else if (gate.action === "chest") {
+      if (this.stashUI?.chestId === gate.id) this.closeStashUI();
+      else this.openStashUI(gate.id, gate.title);
     } else if (gate.action === "command") {
       this.openCommandCenter(cx);
     } else if (gate.action === "changes" && this.lastAgentTerminal) {
@@ -174,13 +177,13 @@ export const world = {
       return { id: `${flock.kind}-${i}`, x, y, asset: `wildlife.bird.${flock.kind}.${frame}` };
     }).filter(b => b.x >= bgX - 16 && b.x <= bgX + W / z + 16 && b.y >= bgY - 12 && b.y <= bgY + H / z + 12);
     const cmdAgent = this.findCommandAgent();
-    const cmdGate = !this.choosingAgent ? this.nearCommandPreview() : null;
+    const cmdGate = !this.choosingAgent && !this.terminalDialog && !this.changesDialog ? this.nearCommandPreview() : null;
     const cmdWorking = cmdAgent?.status === "working";
     const t = theme();
     const cmdColor = { working: t.working, blocked: t.blocked, done: t.done, idle: t.muted }[cmdAgent?.status] ?? t.dim;
     const lineColor = { tool: t.ansi6 ?? t.accent, subtool: t.muted, error: t.ansi1 ?? t.blocked, ok: t.ansi2 ?? t.done, accent: t.ansi3 ?? t.accent, text: t.foreground };
-    const cmdLines = cmdAgent && this.commandPreview?.address === cmdAgent.address && this.commandPreview.lines.length
-      ? this.commandPreview.lines
+    const cmdLines = cmdAgent && this.commandPreview?.address === cmdAgent.address
+      ? (this.commandPreview.lines.length ? this.commandPreview.lines : [{ text: `Ready (${cmdAgent.status ?? "idle"})`, kind: "subtool" }])
       : [{ text: cmdAgent ? "Reading terminal…" : "Offline · press E to start", kind: "subtool" }];
     const current = spaces().find(s => s.active);
     const list = this.choosingAgent ? this.localAgents() : [];
@@ -221,6 +224,17 @@ export const world = {
             .child(image(sekaiAssetPath(definition.atmosphere.mist)).size_full())).loop("opacity",{from:.42,to:.8,period:11000}))
         .children(decorations.map(o=>sprite(o.frames ? o.frames[Math.round(this.doorState?.[o.id] ?? 0)] : o.asset, o.x, o.y, o.w, o.h)))
         .children(terrain.filter(o=>o.x+o.w >= cameraX && o.x <= cameraX+W/z && o.y+o.h >= cameraY && o.y <= cameraY+H/z).map(o => {
+          if (o.asset === "terrain.dirt-ground") {
+            const [tileWidth] = sekaiAssetCatalog[o.asset].size;
+            const first = Math.max(0, Math.floor((cameraX - o.x) / tileWidth));
+            const last = Math.min(Math.ceil(o.w / tileWidth), Math.ceil((cameraX + W / z - o.x) / tileWidth));
+            const left = snap((o.x - cameraX) * unit), top = snap((o.y - cameraY) * unit);
+            const height = snap((o.y + o.h - cameraY) * unit) - top;
+            return scene(o.x, o.y, o.w, o.h).bg("#4c322e").overflow_hidden().children(Array.from({ length: Math.max(0, last - first) }, (_, i) => {
+              const a = snap((o.x + (first + i) * tileWidth - cameraX) * unit), b = snap((o.x + (first + i + 1) * tileWidth - cameraX) * unit);
+              return div().absolute().left(a - left).top(0).w(b - a).h(height).child(image(sekaiAssetPath(o.asset)).size_full());
+            }));
+          }
           const timber = o.asset === "terrain.timber";
           const row = (y, c) => div().w_full().h(unit).bg(c);
           return scene(o.x,o.y,o.w,o.h).bg(timber ? "#664753" : "#474760").overflow_hidden().flex().flex_col()
@@ -248,13 +262,41 @@ export const world = {
             .children(cmdLines.map(line => div().w_full().truncate().text_color(lineColor[line.kind] ?? t.foreground).child(line.text))))))
         .children(this.trail.map((p,i) => sprite(`character.default.dash.${this.facing < 0 ? "left" : "right"}.0`, p.x-8, p.y-24, 16, 24).opacity(0.45-i*0.1)))
         .child(sprite(`character.default.${this.pose}.${this.facing < 0 ? "left" : "right"}.${Math.floor(this.frame/3)%sekaiFrames[this.pose]}`, this.x-8, this.y-24, 16, 24))
+        .when(this.swingTicks > 0, el => {
+          const swingSide = (this.swingDir ?? this.facing) < 0 ? "left" : "right";
+          const swingFrame = Math.min(3, Math.floor((8 - this.swingTicks) / 2));
+          return el.child(sprite(`fx.${this.swingKind ?? "swing"}.${swingSide}.${swingFrame}`, this.x + (swingSide === "right" ? -4 : -20), this.y - 24, 24, 24));
+        })
         .when(sky.night > 0.02, el => el.child(place(0,0,W,H).bg("#0f1838").opacity(sky.night * 0.16)))
         .when(sky.twilight > 0.02, el => el.child(place(0,0,W,H).bg("#ff8b4a").opacity(sky.twilight * 0.09)))
-        .child(place(6,4,308,12).flex().justify_between().text_size(5*scale).text_color(sky.daylight > 0.65 ? "#1b2640" : "#e8eaff")
-          .child(`SEKAI  /  ${current?.name ?? "Mountain"}  ·  ${sky.clock} ${sky.label}`).child("← → move  ↑ jump  X dash  E enter  T time"))
-
-        .child(place(0,170,320,9).flex().justify_center().items_center().text_size(5*scale).text_color("#f9e1b7")
-          .child(near ? `E · ${near.title}` : this.message))
+        .child((() => {
+          const timeColor = { DAWN: "#ffd28a", DAY: "#a8e0ff", DUSK: "#ff9e6e", NIGHT: "#c2cff8" }[sky.label] ?? "#e8eaff";
+          const plaque = content => div().relative().overflow_hidden().bg("#2c1d1e").border(scale).border_color("#201417")
+            .child(div().absolute().inset_0().opacity(0.55).child(image(sekaiAssetPath("terrain.dirt-ground")).size_full()))
+            .child(div().absolute().inset_0().bg("#221518").opacity(0.58))
+            .child(div().relative().flex().items_center().gap(3*scale).px(4*scale).py(1.5*scale).border(scale).border_color("#9c7154")
+              .child(div().absolute().left(scale).top(scale).w(scale).h(scale).bg("#d7ac7d"))
+              .child(div().absolute().right(scale).top(scale).w(scale).h(scale).bg("#d7ac7d"))
+              .child(div().absolute().left(scale).bottom(scale).w(scale).h(scale).bg("#6b4738"))
+              .child(div().absolute().right(scale).bottom(scale).w(scale).h(scale).bg("#6b4738"))
+              .child(content));
+          return place(4,3,312,16).flex().items_center().justify_between().text_size(4.6*scale)
+            .child(plaque(div().flex().items_center().gap(2.5*scale)
+              .child(div().font_bold().text_color("#f5d27a").child("SEKAI"))
+              .child(div().text_color("#8c6a56").child("·"))
+              .child(div().text_color("#f4ead8").child(current?.name ?? "Mountain"))
+              .child(div().text_color("#8c6a56").child("·"))
+              .child(div().font_bold().text_color(timeColor).child(`${sky.clock} ${sky.label}`))))
+            .child(plaque(div().text_color("#dfd2be").child("← → move  ↑ jump  X dash  E use  I bag  T time")));
+        })())
+        .child(this.renderHotbarHUD(place, scale))
+        .when(Boolean(near || this.message), el => el.child(place(0,131,320,14).flex().justify_center().items_center().text_size(4.6*scale)
+          .child(div().relative().overflow_hidden().bg("#2c1d1e").border(scale).border_color("#201417")
+            .child(div().absolute().inset_0().opacity(0.5).child(image(sekaiAssetPath("terrain.dirt-ground")).size_full()))
+            .child(div().absolute().inset_0().bg("#221518").opacity(0.62))
+            .child(div().relative().px(5*scale).py(1.5*scale).border(scale).border_color("#c79a72").font_bold().text_color("#fff0c2")
+              .child(near ? `E · ${near.title}` : this.message)))))
+        .when(Boolean(this.stashUI), el => el.child(this.renderStashModal(W*scale, H*scale)))
         .when(this.choosingAgent, el => el.child(this.renderPicker(div().absolute().left((W*scale-pickerWidth)/2).top((H*scale-pickerHeight)/2).w(pickerWidth).h(pickerHeight), list))));
   }
 };

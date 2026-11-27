@@ -1,7 +1,7 @@
 import { focused, closeOverlay, window } from "herdr";
 import { DAY_MS, WORLD_W, FLOOR, platforms } from "./world.js";
 
-const controls = new Set(["left", "right", "up", "down", "a", "d", "w", "s", "space", "e", "enter", "x", "shift", "t"]);
+const controls = new Set(["left", "right", "up", "down", "a", "d", "w", "s", "space", "e", "enter", "x", "shift", "t", "i", "f", "z", "j", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
 
 export const player = {
   direction() {
@@ -30,21 +30,42 @@ export const player = {
     this.bindIdentity(focused(), true);
     if (e.key === "escape" && this.terminalDialog && focused()?.pane === this.pane) {
       cx.stop_propagation();
+      if (this.commandPreview?.address === this.terminalDialog.terminal) this.commandPreview = null;
       closeOverlay(this.terminalDialog.id);
       this.terminalDialog = null;
       return;
     }
     if (this.choosingAgent) { this.pickerKey(e, cx); return; }
+    if (this.stashUI) { this.stashKeyInput(e, cx); return; }
     if (!controls.has(e.key)) return;
     cx.stop_propagation();
     this.inputPane = focused()?.pane;
     this.message = "";
+    if (/^[1-9]$/.test(e.key)) {
+      if (!e.is_held) {
+        if (!this.stash) this.loadStash();
+        this.saveStash({ ...this.stash, activeHotbar: Number(e.key) - 1 });
+        cx.notify();
+      }
+      return;
+    }
+    if (e.key === "i") {
+      if (!e.is_held) { this.openStashUI(null); cx.notify(); }
+      return;
+    }
     if (e.key === "t") {
       if (!e.is_held) { this.dayStart -= DAY_MS / 8; cx.notify(); }
       return;
     }
     if (e.key === "e" || e.key === "enter") {
-      if (!e.is_held && this.near()) this.activate(this.near(), cx);
+      if (!e.is_held) {
+        if (this.near()) this.activate(this.near(), cx);
+        else if (e.key === "e") this.trySwing(cx);
+      }
+      return;
+    }
+    if (["f", "z", "j"].includes(e.key)) {
+      if (!e.is_held) this.trySwing(cx);
       return;
     }
     this.keys.add(e.key);
@@ -63,6 +84,22 @@ export const player = {
     if (!e.is_held && ["down", "s"].includes(e.key) && this.ground && this.y < FLOOR && !this.dashTicks) {
       this.y += 1; this.ground = false;
     }
+    if (!this.running) { this.running = true; this.tick(cx); }
+  },
+
+  trySwing(cx) {
+    if (this.swingTicks > 0) return;
+    if (!this.stash) this.loadStash?.();
+    const active = this.stash?.hotbar?.[this.stash.activeHotbar]?.itemId;
+    const eq = this.stash?.equipment;
+    const kind = active === "gear.summit-blade" ? "swing"
+      : active === "gear.mason-pick" ? "pick"
+      : eq?.weapon?.itemId === "gear.summit-blade" ? "swing"
+      : eq?.tool?.itemId === "gear.mason-pick" ? "pick" : null;
+    if (!kind) return;
+    this.swingKind = kind;
+    this.swingTicks = 8;
+    this.swingDir = this.facing;
     if (!this.running) { this.running = true; this.tick(cx); }
   },
 
@@ -95,13 +132,14 @@ export const player = {
       }
     }
     if (dashing && !this.dashTicks && !this.ground) this.vy = 0;
+    if (this.swingTicks > 0) this.swingTicks--;
     const pose = dashing ? "dash" : !this.ground ? (this.vy < 0 ? "jump" : "fall") : dx ? "run" : "idle";
     this.frame = pose === this.pose ? this.frame + 1 : 0;
     this.pose = pose;
     const movingCamera = this.updateCamera(cx);
     const movingDoors = this.updateDoors();
     cx.notify();
-    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle" && !movingCamera && !movingDoors) this.running = false;
+    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle" && !movingCamera && !movingDoors && !(this.swingTicks > 0)) this.running = false;
     else cx.timer.after(30, cx => this.tick(cx));
   }
 };

@@ -28,7 +28,7 @@ You are the always-alive Command Center agent for Sekai, a native Herdr Desktop 
 ## Creating or editing pixel art
 
 - Author terrain tiles at `32×5` logical pixels (opaque) and sprites/decorations at their logical pixel dimensions (RGBA transparent).
-- Upscale all generated PNGs 4× with nearest-neighbor resampling (`Image.Resampling.NEAREST`) so pixels stay crisp.
+- **Art padding & rendering:** GPUI's Metal sprite shader uses linear texture filtering without atlas padding and a 0.5 px SDF border fade. Every decoration, portal, and character sprite PNG includes a 1-logical-pixel (`4 px` after 4× upscale) transparent border on all four sides so `world.js`'s `sprite()` helper can clip out the outer quad border cleanly. Tiled platforms are rendered as crisp native `div()` rows in `world.js`.
 - Keep stars behind the mountain silhouette in `world.js` (`skyline` / `skyHeight`).
 
 ## Validation and live reload

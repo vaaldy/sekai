@@ -153,6 +153,15 @@ export const world = {
     const bgY = Math.max(0,Math.min(bgHeight-H/z,cameraY*parallaxY));
     const unit = scale*z;
     const scene = (x,y,w,h) => worldPlace(x-cameraX,y-cameraY,w,h);
+    // Clip out GPUI's 0.5px SDF quad border & linear atlas bleed using 1-logical-px padded sprites.
+    const clippedSprite = (assetId, pxX, pxY, w, h) => {
+      const left = snap(pxX*unit), top = snap(pxY*unit);
+      const boxW = snap((pxX+w)*unit)-left, boxH = snap((pxY+h)*unit)-top;
+      return div().absolute().left(left).top(top).w(boxW).h(boxH).overflow_hidden()
+        .child(div().absolute().left(-unit).top(-unit).w(boxW+2*unit).h(boxH+2*unit)
+          .child(image(sekaiAssetPath(assetId)).size_full()));
+    };
+    const sprite = (assetId, x, y, w, h) => clippedSprite(assetId, x-cameraX, y-cameraY, w, h);
     const near = this.near();
     const now = Date.now();
     const sky = skyState(((now - (this.dayStart ?? now)) % DAY_MS) / DAY_MS);
@@ -191,9 +200,9 @@ export const world = {
         if (Math.abs(this.size.width-width)>.01 || Math.abs(this.size.height-height)>.01) { this.size={width,height}; cx.notify(); }
       })
       .child(div().relative().w(W*scale).h(H*scale).overflow_hidden()
-        .child(worldPlace(-bgX,-bgY,bgWidth,bgHeight).child(image(sekaiAssetPath(definition.background.asset)).size_full()))
+        .child(worldPlace(-bgX-2,-bgY-2,bgWidth+4,bgHeight+4).child(image(sekaiAssetPath(definition.background.asset)).size_full()))
         .when(Boolean(definition.background.dayAsset) && sky.daylight > 0.01, el =>
-          el.child(worldPlace(-bgX,-bgY,bgWidth,bgHeight).opacity(sky.daylight).child(image(sekaiAssetPath(definition.background.dayAsset)).size_full())))
+          el.child(worldPlace(-bgX-2,-bgY-2,bgWidth+4,bgHeight+4).opacity(sky.daylight).child(image(sekaiAssetPath(definition.background.dayAsset)).size_full())))
         .when(sky.sunVisible && sky.daylight > 0.05 && sky.sunX >= bgX-20 && sky.sunX <= bgX+W/z+20, el =>
           el.child(worldPlace(sky.sunX-9-bgX,sky.sunY-9-bgY,18,18).opacity(Math.min(1, sky.daylight*1.2))
             .child(div().absolute().left(2*unit).top(0).w(14*unit).h(18*unit).bg("#fff1a8"))
@@ -206,26 +215,25 @@ export const world = {
               .when(s.size>2, el => el.child(div().absolute().left((s.size-1)*unit/2).w(unit).h(s.size*unit).bg(s.color)).child(div().absolute().top((s.size-1)*unit/2).w(s.size*unit).h(unit).bg(s.color)))
               .when(s.size===2, el => el.bg(s.color))
               .loop("opacity", {from:.12,to:1,period:s.period})))))
-        .children(skyBirds.map(b => worldPlace(b.x-bgX,b.y-bgY,14,10).child(image(sekaiAssetPath(b.asset)).size_full())))
+        .children(skyBirds.map(b => clippedSprite(b.asset, b.x-bgX, b.y-bgY, 14, 10).id(b.id)))
         .child(worldPlace(-bgX,172-bgY,640,78).id("forest-atmosphere").opacity(.55).overflow_hidden()
           .child(div().absolute().w(660*scale*z).h(78*scale*z).loop("left",{from:-20*scale*z,to:0,period:16000})
             .child(image(sekaiAssetPath(definition.atmosphere.mist)).size_full())).loop("opacity",{from:.42,to:.8,period:11000}))
-        .children(decorations.map(o=>scene(o.x,o.y,o.w,o.h).child(image(sekaiAssetPath(o.frames ? o.frames[Math.round(this.doorState?.[o.id] ?? 0)] : o.asset)).size_full())))
+        .children(decorations.map(o=>sprite(o.frames ? o.frames[Math.round(this.doorState?.[o.id] ?? 0)] : o.asset, o.x, o.y, o.w, o.h)))
         .children(terrain.filter(o=>o.x+o.w >= cameraX && o.x <= cameraX+W/z && o.y+o.h >= cameraY && o.y <= cameraY+H/z).map(o => {
-          const [tileWidth] = sekaiAssetCatalog[o.asset].size;
-          const first = Math.max(0,Math.floor((cameraX-o.x)/tileWidth));
-          const last = Math.min(Math.ceil(o.w/tileWidth),Math.ceil((cameraX+W/z-o.x)/tileWidth));
-          const left = snap((o.x-cameraX)*unit), top = snap((o.y-cameraY)*unit);
-          const height = snap((o.y+o.h-cameraY)*unit)-top;
-          return scene(o.x,o.y,o.w,o.h).overflow_hidden().children(Array.from({length:Math.max(0,last-first)},(_,i)=>{
-            const a = snap((o.x+(first+i)*tileWidth-cameraX)*unit), b = snap((o.x+(first+i+1)*tileWidth-cameraX)*unit);
-            return div().absolute().left(a-left).top(0).w(b-a).h(height).child(image(sekaiAssetPath(o.asset)).size_full());
-          }));
+          const timber = o.asset === "terrain.timber";
+          const row = (y, c) => div().w_full().h(unit).bg(c);
+          return scene(o.x,o.y,o.w,o.h).bg(timber ? "#664753" : "#474760").overflow_hidden().flex().flex_col()
+            .child(row(0, timber ? "#d7ac7d" : "#d0e0eb"))
+            .child(row(1, timber ? "#b88c68" : "#8eb9d2"))
+            .child(row(2, timber ? "#7a5458" : "#686483"))
+            .child(row(3, timber ? "#664753" : "#565570"))
+            .child(div().w_full().flex_1().bg(timber ? "#44383e" : "#37384f"));
         }))
         .children(gates.filter(g => g.x >= cameraX-30 && g.x <= cameraX+W/z+30 && g.y >= cameraY && g.y <= cameraY+H/z+25).map(g => scene(g.x-30,g.y-29,60,29).flex().flex_col().items_center().justify_end()
           .child(div().text_size(5.5*unit).font_bold().text_color(near===g ? "#fff2a9" : "#dceaff").child(g.title))
-          .child(div().relative().w(g.w*unit).h(g.h*unit)
-            .child(image(sekaiAssetPath(g.asset)).size_full())
+          .child(div().relative().w(g.w*unit).h(g.h*unit).overflow_hidden()
+            .child(div().absolute().left(-unit).top(-unit).w((g.w+2)*unit).h((g.h+2)*unit).child(image(sekaiAssetPath(g.asset)).size_full()))
             .when(g.action === "command" && cmdWorking, el => el
               .child(div().id("cmd-pulse-a").absolute().left(7*unit).top(6*unit).w(2*unit).h(2*unit).bg("#f5d27a").loop("opacity", { from: 0.1, to: 1, period: 520 }))
               .child(div().id("cmd-pulse-b").absolute().left(11*unit).top(6*unit).w(2*unit).h(2*unit).bg("#e6838d").loop("opacity", { from: 0.1, to: 1, period: 710 }))
@@ -238,9 +246,8 @@ export const world = {
             .child(div().text_color(t.muted).child("E OPEN")))
           .child(div().w_full().min_w(0).flex().flex_col().gap(unit).text_size(3.4*unit)
             .children(cmdLines.map(line => div().w_full().truncate().text_color(lineColor[line.kind] ?? t.foreground).child(line.text))))))
-        .children(this.trail.map((p,i) => scene(p.x-8,p.y-24,16,24).opacity(0.45-i*0.1)
-          .child(image(sekaiAssetPath(`character.default.dash.${this.facing < 0 ? "left" : "right"}.0`)).size_full())))
-        .child(scene(this.x-8,this.y-24,16,24).child(image(sekaiAssetPath(`character.default.${this.pose}.${this.facing < 0 ? "left" : "right"}.${Math.floor(this.frame/3)%sekaiFrames[this.pose]}`)).size_full()))
+        .children(this.trail.map((p,i) => sprite(`character.default.dash.${this.facing < 0 ? "left" : "right"}.0`, p.x-8, p.y-24, 16, 24).opacity(0.45-i*0.1)))
+        .child(sprite(`character.default.${this.pose}.${this.facing < 0 ? "left" : "right"}.${Math.floor(this.frame/3)%sekaiFrames[this.pose]}`, this.x-8, this.y-24, 16, 24))
         .when(sky.night > 0.02, el => el.child(place(0,0,W,H).bg("#0f1838").opacity(sky.night * 0.16)))
         .when(sky.twilight > 0.02, el => el.child(place(0,0,W,H).bg("#ff8b4a").opacity(sky.twilight * 0.09)))
         .child(place(6,4,308,12).flex().justify_between().text_size(5*scale).text_color(sky.daylight > 0.65 ? "#1b2640" : "#e8eaff")

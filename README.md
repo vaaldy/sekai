@@ -2,11 +2,13 @@
 
 Sekai turns a Herdr workspace into a small, playable pixel-art world. Instead of moving between tabs to inspect agents and repositories, walk through a mountain village, open an agent's live terminal, review Git changes, and return to the world without interrupting the session.
 
-Sekai is a native JavaScript mod for [Herdr Desktop](https://github.com/herdrdev/herdr-app), not a separate terminal emulator or game process.
+Sekai is built for [Herdr Desktop](https://github.com/herdrdev/herdr-app). All assets, terrain, and improvements are made to be agentically customizable via the Command Block — have fun with your own pixel vibey world!
+
+![Sekai playthrough](media/sekai-playthrough.gif)
+
+The 13-second playthrough shows movement, jumping, dashing, the agent picker, an embedded terminal, and the Git changes panel. The recording uses a scripted playthrough of the running mod in a sample workspace, with demonstration terminal output and a sample Git repository rather than private conversations.
 
 ![Mountain village and panoramic balcony](media/mountain-view.png)
-
-[Watch the 13-second playthrough (MP4)](media/sekai-playthrough.mp4). It shows movement, jumping, dashing, the agent picker, an embedded terminal, and the Git changes panel. The recording uses a scripted playthrough of the running mod in a sample workspace, with demonstration terminal output and a sample Git repository rather than private conversations.
 
 ## Explore the world
 

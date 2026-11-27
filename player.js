@@ -1,7 +1,7 @@
 import { focused, closeOverlay, window } from "herdr";
-import { WORLD_W, FLOOR, platforms } from "./world.js";
+import { DAY_MS, WORLD_W, FLOOR, platforms } from "./world.js";
 
-const controls = new Set(["left", "right", "up", "down", "a", "d", "w", "s", "space", "e", "enter", "x", "shift"]);
+const controls = new Set(["left", "right", "up", "down", "a", "d", "w", "s", "space", "e", "enter", "x", "shift", "t"]);
 
 export const player = {
   direction() {
@@ -38,7 +38,11 @@ export const player = {
     if (!controls.has(e.key)) return;
     cx.stop_propagation();
     this.inputPane = focused()?.pane;
-    this.message = "Explore the mountain";
+    this.message = "";
+    if (e.key === "t") {
+      if (!e.is_held) { this.dayStart -= DAY_MS / 8; cx.notify(); }
+      return;
+    }
     if (e.key === "e" || e.key === "enter") {
       if (!e.is_held && this.near()) this.activate(this.near(), cx);
       return;
@@ -95,8 +99,9 @@ export const player = {
     this.frame = pose === this.pose ? this.frame + 1 : 0;
     this.pose = pose;
     const movingCamera = this.updateCamera(cx);
+    const movingDoors = this.updateDoors();
     cx.notify();
-    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle" && !movingCamera) this.running = false;
+    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle" && !movingCamera && !movingDoors) this.running = false;
     else cx.timer.after(30, cx => this.tick(cx));
   }
 };

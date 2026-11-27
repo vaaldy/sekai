@@ -1,5 +1,5 @@
 import { div, image } from "gpui-kit";
-import { focused, layout, openOverlay, run, setShared, settings, spaces } from "herdr";
+import { focused, layout, openOverlay, run, setShared, settings, spaces, theme } from "herdr";
 
 import { sekaiAssetCatalog, sekaiAssetPath, sekaiFrames, sekaiWorldDefinition, validateSekaiWorld } from "./world-data.js";
 
@@ -9,8 +9,10 @@ export const H = definition.viewport[1];
 export const WORLD_W = definition.size[0];
 export const WORLD_H = definition.size[1];
 export const FLOOR = definition.floor;
+export const DAY_MS = 180000;
 const terrain = definition.objects.filter(o=>o.kind==="platform");
 const decorations = definition.objects.filter(o=>o.kind==="decoration");
+const doors = decorations.filter(o=>o.frames);
 export const platforms = terrain.map(o=>[o.x,o.x+o.w,o.y]);
 const gates = definition.objects.filter(o=>o.kind==="portal").map(o=>({...o,x:o.x+o.w/2,y:o.y+o.h}));
 const skyline = [[-35,210],[20,170],[66,156],[95,130],[111,137],[158,160],[187,145],[224,111],[253,101],[290,49],[326,18],[339,40],[353,50],[381,90],[399,96],[422,141],[468,157],[490,126],[516,104],[526,119],[546,131],[569,155],[610,171],[670,216]];
@@ -26,6 +28,27 @@ const twinkles = Array.from({length: 116}, (_,i) => {
   return { x, y, period: 1250 + (i*719)%3100, size, color: "#e5eaff" };
 }).concat([90,250,410,570].map((x,i) => ({ x, y: 211+i%2*10, period: 2100+i*530, size: 3, color: "#ffe4a9" })));
 
+function skyState(phase) {
+  const p = ((phase % 1) + 1) % 1;
+  const sunAlt = -Math.cos(p * 2 * Math.PI);
+  const daylight = Math.max(0, Math.min(1, (sunAlt + 0.25) / 0.5));
+  const twilight = Math.max(0, 1 - Math.abs(sunAlt) / 0.35);
+  const mins = Math.floor(p * 1440);
+  const clock = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+  const label = p < 0.2 || p >= 0.85 ? "NIGHT" : p < 0.35 ? "DAWN" : p < 0.7 ? "DAY" : "DUSK";
+  const dayT = Math.max(0, Math.min(1, (p - 0.22) / 0.56));
+  const sunX = 80 + dayT * 480;
+  const sunY = 92 - Math.sin(dayT * Math.PI) * 68;
+  return { daylight, twilight, night: 1 - daylight, clock, label, sunX, sunY, sunVisible: p > 0.21 && p < 0.79 };
+}
+
+const flocks = {
+  DAWN:  { kind: "dawn",  dir:  1, speed: 14, flapMs: 260, bob: 3,   birds: [[110, 56, 0], [134, 66, 1.3], [360, 48, 2.7]] },
+  DAY:   { kind: "day",   dir:  1, speed: 19, flapMs: 220, bob: 5,   birds: [[80, 44, 0], [270, 62, 1.8], [460, 40, 3.4]] },
+  DUSK:  { kind: "dusk",  dir: -1, speed: 12, flapMs: 360, bob: 2,   birds: [[220, 52, 0], [238, 45, 0.5], [240, 60, 1.0]] },
+  NIGHT: { kind: "night", dir: -1, speed:  9, flapMs: 440, bob: 2.5, birds: [[390, 46, 0]] },
+};
+
 function find(node, id) {
   if (!node || typeof node !== "object") return undefined;
   if (node.id === id) return node;
@@ -38,12 +61,19 @@ function find(node, id) {
 export const world = {
   near() { return gates.find(g => Math.abs(g.x - this.x) <= 14 && Math.abs(g.y - this.y) <= 5); },
 
+  nearCommandPreview() {
+    const g = gates.find(entry => entry.action === "command");
+    return g && Math.abs(g.x - this.x) <= 64 && Math.abs(g.y - this.y) <= 32 ? g : null;
+  },
+
   activate(gate, cx) {
     this.keys.clear();
     if (gate.action === "spaces") {
       openOverlay({ mod: "tab-prefix", kind: "dialog", width: 320, props: { mode: "workspace" } });
     } else if (gate.action === "tabs") {
       this.choosingAgent = !this.choosingAgent; this.agentIndex = 0;
+    } else if (gate.action === "command") {
+      this.openCommandCenter(cx);
     } else if (gate.action === "changes" && this.lastAgentTerminal) {
       this.bindIdentity(focused(), true);
       if (!this.pane || focused()?.pane !== this.pane) return;
@@ -66,6 +96,21 @@ export const world = {
     const id = openOverlay({ mod: "sekai-changes", kind: "dialog", width: 0.78, height: 0.8, props: { terminal: this.lastAgentTerminal, origin } });
     this.changesDialog = { ...origin, id };
     setShared("sekai.changesOverlay", this.changesDialog);
+  },
+
+  updateDoors() {
+    this.doorState ??= {};
+    let moving = false;
+    for (const d of doors) {
+      const open = Math.abs(d.x + d.w / 2 - this.x) <= 22 && this.y >= d.y && this.y <= d.y + d.h + 6;
+      const target = open ? d.frames.length - 1 : 0;
+      const cur = this.doorState[d.id] ?? 0;
+      if (cur !== target) {
+        this.doorState[d.id] = cur < target ? Math.min(target, cur + 0.5) : Math.max(target, cur - 0.5);
+        moving = true;
+      }
+    }
+    return moving;
   },
 
   // Call once per movement tick, including idle ticks during the transition.
@@ -109,6 +154,25 @@ export const world = {
     const unit = scale*z;
     const scene = (x,y,w,h) => worldPlace(x-cameraX,y-cameraY,w,h);
     const near = this.near();
+    const now = Date.now();
+    const sky = skyState(((now - (this.dayStart ?? now)) % DAY_MS) / DAY_MS);
+    const flock = flocks[sky.label];
+    const span = bgWidth + 40;
+    const skyBirds = flock.birds.map(([x0, y0, ph], i) => {
+      const x = (((x0 + flock.dir * (now / 1000) * flock.speed) % span) + span) % span - 20;
+      const y = y0 + Math.sin(now / 700 + ph) * flock.bob;
+      const frame = Math.floor(now / flock.flapMs + ph) % 2;
+      return { id: `${flock.kind}-${i}`, x, y, asset: `wildlife.bird.${flock.kind}.${frame}` };
+    }).filter(b => b.x >= bgX - 16 && b.x <= bgX + W / z + 16 && b.y >= bgY - 12 && b.y <= bgY + H / z + 12);
+    const cmdAgent = this.findCommandAgent();
+    const cmdGate = !this.choosingAgent ? this.nearCommandPreview() : null;
+    const cmdWorking = cmdAgent?.status === "working";
+    const t = theme();
+    const cmdColor = { working: t.working, blocked: t.blocked, done: t.done, idle: t.muted }[cmdAgent?.status] ?? t.dim;
+    const lineColor = { tool: t.ansi6 ?? t.accent, subtool: t.muted, error: t.ansi1 ?? t.blocked, ok: t.ansi2 ?? t.done, accent: t.ansi3 ?? t.accent, text: t.foreground };
+    const cmdLines = cmdAgent && this.commandPreview?.address === cmdAgent.address && this.commandPreview.lines.length
+      ? this.commandPreview.lines
+      : [{ text: cmdAgent ? "Reading terminal…" : "Offline · press E to start", kind: "subtool" }];
     const current = spaces().find(s => s.active);
     const list = this.choosingAgent ? this.localAgents() : [];
     const pickerWidth = Math.min(W * scale, 400);
@@ -128,15 +192,25 @@ export const world = {
       })
       .child(div().relative().w(W*scale).h(H*scale).overflow_hidden()
         .child(worldPlace(-bgX,-bgY,bgWidth,bgHeight).child(image(sekaiAssetPath(definition.background.asset)).size_full()))
-        .children(twinkles.filter(s => s.x >= bgX-3 && s.x <= bgX+W/z+3 && s.y >= bgY-3 && s.y <= bgY+H/z && (s.color !== "#ffe4a9" || (s.x >= bgX+(W/z-W)/2 && s.x < bgX+(W/z+W)/2))).map(s =>
-          worldPlace(s.x-bgX,s.y-bgY,s.size,s.size).id(`sky-star-${s.x}-${s.y}`)
-            .when(s.size>2, el => el.child(div().absolute().left((s.size-1)*unit/2).w(unit).h(s.size*unit).bg(s.color)).child(div().absolute().top((s.size-1)*unit/2).w(s.size*unit).h(unit).bg(s.color)))
-            .when(s.size===2, el => el.bg(s.color))
-            .loop("opacity", {from:.12,to:1,period:s.period})))
+        .when(Boolean(definition.background.dayAsset) && sky.daylight > 0.01, el =>
+          el.child(worldPlace(-bgX,-bgY,bgWidth,bgHeight).opacity(sky.daylight).child(image(sekaiAssetPath(definition.background.dayAsset)).size_full())))
+        .when(sky.sunVisible && sky.daylight > 0.05 && sky.sunX >= bgX-20 && sky.sunX <= bgX+W/z+20, el =>
+          el.child(worldPlace(sky.sunX-9-bgX,sky.sunY-9-bgY,18,18).opacity(Math.min(1, sky.daylight*1.2))
+            .child(div().absolute().left(2*unit).top(0).w(14*unit).h(18*unit).bg("#fff1a8"))
+            .child(div().absolute().left(0).top(2*unit).w(18*unit).h(14*unit).bg("#fff1a8"))
+            .child(div().absolute().left(3*unit).top(3*unit).w(12*unit).h(12*unit).bg("#fffbe0"))))
+        .when(sky.twilight > 0.02, el => el.child(place(0,0,W,H).bg("#e87d52").opacity(sky.twilight * 0.26)))
+        .when(sky.night > 0.02, el => el.child(div().absolute().inset_0().opacity(sky.night)
+          .children(twinkles.filter(s => s.x >= bgX-3 && s.x <= bgX+W/z+3 && s.y >= bgY-3 && s.y <= bgY+H/z && (s.color !== "#ffe4a9" || (s.x >= bgX+(W/z-W)/2 && s.x < bgX+(W/z+W)/2))).map(s =>
+            worldPlace(s.x-bgX,s.y-bgY,s.size,s.size).id(`sky-star-${s.x}-${s.y}`)
+              .when(s.size>2, el => el.child(div().absolute().left((s.size-1)*unit/2).w(unit).h(s.size*unit).bg(s.color)).child(div().absolute().top((s.size-1)*unit/2).w(s.size*unit).h(unit).bg(s.color)))
+              .when(s.size===2, el => el.bg(s.color))
+              .loop("opacity", {from:.12,to:1,period:s.period})))))
+        .children(skyBirds.map(b => worldPlace(b.x-bgX,b.y-bgY,14,10).child(image(sekaiAssetPath(b.asset)).size_full())))
         .child(worldPlace(-bgX,172-bgY,640,78).id("forest-atmosphere").opacity(.55).overflow_hidden()
           .child(div().absolute().w(660*scale*z).h(78*scale*z).loop("left",{from:-20*scale*z,to:0,period:16000})
             .child(image(sekaiAssetPath(definition.atmosphere.mist)).size_full())).loop("opacity",{from:.42,to:.8,period:11000}))
-        .children(decorations.map(o=>scene(o.x,o.y,o.w,o.h).child(image(sekaiAssetPath(o.asset)).size_full())))
+        .children(decorations.map(o=>scene(o.x,o.y,o.w,o.h).child(image(sekaiAssetPath(o.frames ? o.frames[Math.round(this.doorState?.[o.id] ?? 0)] : o.asset)).size_full())))
         .children(terrain.filter(o=>o.x+o.w >= cameraX && o.x <= cameraX+W/z && o.y+o.h >= cameraY && o.y <= cameraY+H/z).map(o => {
           const [tileWidth] = sekaiAssetCatalog[o.asset].size;
           const first = Math.max(0,Math.floor((cameraX-o.x)/tileWidth));
@@ -148,14 +222,29 @@ export const world = {
             return div().absolute().left(a-left).top(0).w(b-a).h(height).child(image(sekaiAssetPath(o.asset)).size_full());
           }));
         }))
-        .children(gates.filter(g => g.x >= cameraX-30 && g.x <= cameraX+W/z+30 && g.y >= cameraY && g.y <= cameraY+H/z+25).map(g => scene(g.x-30,g.y-29,60,29).flex().flex_col().items_center()
+        .children(gates.filter(g => g.x >= cameraX-30 && g.x <= cameraX+W/z+30 && g.y >= cameraY && g.y <= cameraY+H/z+25).map(g => scene(g.x-30,g.y-29,60,29).flex().flex_col().items_center().justify_end()
           .child(div().text_size(5.5*unit).font_bold().text_color(near===g ? "#fff2a9" : "#dceaff").child(g.title))
-          .child(image(sekaiAssetPath(g.asset)).w(g.w*unit).h(g.h*unit))))
+          .child(div().relative().w(g.w*unit).h(g.h*unit)
+            .child(image(sekaiAssetPath(g.asset)).size_full())
+            .when(g.action === "command" && cmdWorking, el => el
+              .child(div().id("cmd-pulse-a").absolute().left(7*unit).top(6*unit).w(2*unit).h(2*unit).bg("#f5d27a").loop("opacity", { from: 0.1, to: 1, period: 520 }))
+              .child(div().id("cmd-pulse-b").absolute().left(11*unit).top(6*unit).w(2*unit).h(2*unit).bg("#e6838d").loop("opacity", { from: 0.1, to: 1, period: 710 }))
+              .child(div().id("cmd-pulse-c").absolute().left(9*unit).top(8*unit).w(2*unit).h(2*unit).bg("#b894ff").loop("opacity", { from: 0.1, to: 1, period: 610 }))
+              .child(div().id("cmd-pulse-d").absolute().left(7*unit).top(10*unit).w(2*unit).h(2*unit).bg("#67e0d4").loop("opacity", { from: 0.1, to: 1, period: 830 }))
+              .child(div().id("cmd-pulse-e").absolute().left(11*unit).top(10*unit).w(2*unit).h(2*unit).bg("#9cf5e8").loop("opacity", { from: 0.1, to: 1, period: 460 }))))))
+        .when(Boolean(cmdGate), el => el.child(scene(cmdGate.x-66,cmdGate.y-82,132,52).bg(t.background).opacity(.95).border(unit).border_color(cmdColor).p(3*unit).flex().flex_col().gap(1.5*unit).overflow_hidden()
+          .child(div().w_full().flex().items_center().justify_between().text_size(3.8*unit).font_bold().text_color(cmdColor)
+            .child(`COMMAND · ${(cmdAgent?.status ?? "offline").toUpperCase()}`)
+            .child(div().text_color(t.muted).child("E OPEN")))
+          .child(div().w_full().min_w(0).flex().flex_col().gap(unit).text_size(3.4*unit)
+            .children(cmdLines.map(line => div().w_full().truncate().text_color(lineColor[line.kind] ?? t.foreground).child(line.text))))))
         .children(this.trail.map((p,i) => scene(p.x-8,p.y-24,16,24).opacity(0.45-i*0.1)
           .child(image(sekaiAssetPath(`character.default.dash.${this.facing < 0 ? "left" : "right"}.0`)).size_full())))
         .child(scene(this.x-8,this.y-24,16,24).child(image(sekaiAssetPath(`character.default.${this.pose}.${this.facing < 0 ? "left" : "right"}.${Math.floor(this.frame/3)%sekaiFrames[this.pose]}`)).size_full()))
-        .child(place(6,4,308,12).flex().justify_between().text_size(5*scale).text_color("#e8eaff")
-          .child(`SEKAI  /  ${current?.name ?? "Mountain"}`).child("← → move  ↑ jump  ↓ drop  X/Shift dash  E enter"))
+        .when(sky.night > 0.02, el => el.child(place(0,0,W,H).bg("#0f1838").opacity(sky.night * 0.16)))
+        .when(sky.twilight > 0.02, el => el.child(place(0,0,W,H).bg("#ff8b4a").opacity(sky.twilight * 0.09)))
+        .child(place(6,4,308,12).flex().justify_between().text_size(5*scale).text_color(sky.daylight > 0.65 ? "#1b2640" : "#e8eaff")
+          .child(`SEKAI  /  ${current?.name ?? "Mountain"}  ·  ${sky.clock} ${sky.label}`).child("← → move  ↑ jump  X dash  E enter  T time"))
 
         .child(place(0,170,320,9).flex().justify_center().items_center().text_size(5*scale).text_color("#f9e1b7")
           .child(near ? `E · ${near.title}` : this.message))

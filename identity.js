@@ -22,6 +22,25 @@ export const identity = {
       if (context?.instanceId !== this.instanceId) setShared("sekai.worldContext", { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId });
       if (!this.wasActive) this.focusAttempts = 3;
     }
+    if (active && this.pendingCommandCenter && !this.terminalDialog) {
+      if (Date.now() > this.pendingCommandCenter) {
+        this.pendingCommandCenter = 0;
+        this.message = "";
+        cx.notify();
+      } else {
+        const command = this.findCommandAgent();
+        if (command) {
+          this.pendingCommandCenter = 0;
+          this.message = "";
+          this.openAgent(command, cx);
+          this.wasActive = false;
+          return;
+        }
+      }
+    }
+    if (active && !this.terminalDialog && !this.changesDialog && this.nearCommandPreview?.()) {
+      this.refreshCommandPreview(cx);
+    }
     if (this.consumePortal(selection, cx)) { this.wasActive = false; return; }
     const request = shared("sekai.focusRequest");
     if (active && request?.pane === this.pane && request.tab === selection.tab && (!request.instanceId || request.instanceId === this.instanceId) && request.expires >= Date.now() && request.id !== this.lastFocusRequest) {

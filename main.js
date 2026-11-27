@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { checking, closeOverlay, focused, nextCommand, props } from "herdr";
-import { world } from "./world.js";
+import { DAY_MS, world } from "./world.js";
 import { sekaiWorldDefinition } from "./world-data.js";
 import { player } from "./player.js";
 import { agentMethods } from "./agents.js";
@@ -29,9 +29,13 @@ export default class Sekai extends View {
     this.pane = props()?.pane;
     this.worldId = props()?.worldId;
     this.wasActive = false;
+    this.dayStart = Date.now() - Math.round(DAY_MS * 0.28);
     if (checking()) return;
     // Hidden tabs may not render, so check selection even while the world is hidden.
-    cx.timer.every(150, cx => this.syncFocus(cx));
+    cx.timer.every(150, cx => {
+      this.syncFocus(cx);
+      if (this.wasActive && !this.terminalDialog && !this.changesDialog && !this.running) cx.notify();
+    });
     cx.spawn(async cx => {
       while (true) if (await nextCommand() === "focus" && !this.terminalDialog && !this.changesDialog && this.pane && focused()?.pane === this.pane) { this.handle.focus(); cx.notify(); }
     });

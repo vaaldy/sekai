@@ -1,5 +1,5 @@
 import { View, div, image } from "gpui-kit";
-import { checking, focused, layout, nextCommand, panes, props, run, settings, shared, spaces, window } from "herdr";
+import { agents, checking, closeOverlay, focused, layout, nextCommand, openOverlay, panes, props, run, setShared, settings, shared, spaces, window } from "herdr";
 
 const W = 320, H = 180;
 const platforms = [[0, 320, 166], [120, 200, 132], [72, 136, 98], [184, 248, 98], [12, 100, 64], [220, 308, 64]];
@@ -24,37 +24,63 @@ function find(node, id) {
 
 export default class Sekai extends View {
   init(_props, cx) {
+    this.title = props()?.role === "terminal-title" ? props() : null;
+    if (this.title) return;
+    this.picker = props()?.role === "agent-picker" ? props() : null;
     this.handle = cx.focus_handle();
+    if (this.picker) {
+      this.worldId = this.picker.origin.worldId;
+      this.agentIndex = 0;
+      this.handle.focus();
+      return;
+    }
     this.size = { width: 640, height: 360 };
     this.x = 160; this.y = 166; this.vy = 0; this.ground = true;
     this.facing = 1; this.pose = "idle"; this.frame = 0;
     this.dashes = 2; this.dashTicks = 0; this.trail = [];
+    this.choosingAgent = false; this.agentIndex = 0;
     this.keys = new Set(); this.running = false; this.message = "Click the world to take control";
+    this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.pane = props()?.pane;
+    this.worldId = props()?.worldId;
     this.wasActive = false;
     if (checking()) return;
     // Hidden tabs may not render, so check selection even while the world is hidden.
     cx.timer.every(150, cx => this.syncFocus(cx));
     cx.spawn(async cx => {
-      while (true) if (await nextCommand() === "focus" && this.pane && focused()?.pane === this.pane) { this.handle.focus(); cx.notify(); }
+      while (true) if (await nextCommand() === "focus" && !this.terminalDialog && !this.changesDialog && this.pane && focused()?.pane === this.pane) { this.handle.focus(); cx.notify(); }
     });
+  }
+
+  bindIdentity(selection, ownsInput = false) {
+    const all = spaces();
+    const tabs = this.worldId ? all.find(s => s.id === this.worldId)?.tabs ?? [] : null;
+    const candidates = panes().filter(p => p.mod === "sekai" && (!tabs || tabs.some(t => t.id === p.tab)));
+    const own = this.pane ? candidates.find(p => p.pane === this.pane) : ownsInput ? candidates.find(p => p.pane === selection?.pane) : candidates.length === 1 ? candidates[0] : null;
+    if (!own) return;
+    this.pane = own.pane;
+    this.tabId = own.tab;
+    this.worldId = all.find(s => s.tabs.some(t => t.id === own.tab))?.id ?? this.worldId;
   }
 
   syncFocus(cx) {
     const selection = focused();
-    // Caller-supplied identity is required if more than one Sekai pane exists.
-    if (!this.pane) {
-      const candidates = panes().filter(p => p.mod === "sekai");
-      if (candidates.length === 1) this.pane = candidates[0].pane;
-    }
+    this.bindIdentity(selection);
     const active = Boolean(this.pane && selection?.pane === this.pane && window()?.visible !== false);
-    if (active && !this.wasActive) this.focusAttempts = 3;
-    const request = shared("sekai.focusRequest");
-    if (active && request?.pane === this.pane && request.tab === selection.tab && request.expires >= Date.now() && request.id !== this.lastFocusRequest) {
-      this.lastFocusRequest = request.id;
-      this.focusAttempts = 1;
+    if (active) {
+      const context = shared("sekai.worldContext");
+      if (context?.instanceId !== this.instanceId) setShared("sekai.worldContext", { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId });
+      if (!this.wasActive) this.focusAttempts = 3;
     }
-    if (active && this.focusAttempts > 0) {
+    if (this.consumePortal(selection, cx)) { this.wasActive = false; return; }
+    const request = shared("sekai.focusRequest");
+    if (active && request?.pane === this.pane && request.tab === selection.tab && (!request.instanceId || request.instanceId === this.instanceId) && request.expires >= Date.now() && request.id !== this.lastFocusRequest) {
+      this.lastFocusRequest = request.id;
+      if (request.overlaySession === this.terminalDialog?.session) this.terminalDialog = null;
+      if (request.changesSession === this.changesDialog?.session) this.changesDialog = null;
+      if (!this.terminalDialog && !this.changesDialog) this.focusAttempts = 1;
+    }
+    if (active && !this.terminalDialog && !this.changesDialog && this.focusAttempts > 0) {
       if (this.handle.is_focused()) this.focusAttempts = 0;
       else { this.focusAttempts--; this.handle.focus(); cx.notify(); }
     } else if (!active && this.wasActive) { this.keys.clear(); this.shiftHeld = false; }
@@ -65,14 +91,17 @@ export default class Sekai extends View {
 
   activate(gate, cx) {
     this.keys.clear();
-    const all = spaces(), current = all.find(s => s.id === focused()?.space);
     if (gate.action === "spaces") {
-      run("mod.open", { name: "tab-prefix" });
+      openOverlay({ mod: "tab-prefix", kind: "dialog", width: 320, props: { mode: "workspace" } });
     } else if (gate.action === "tabs") {
-      const tabs = current?.tabs ?? [], index = tabs.findIndex(t => t.id === focused()?.tab);
-      const other = tabs.slice(index + 1).concat(tabs.slice(0, index)).find(t => !t.settled);
-      if (other) run("tab.select", { id: other.id });
-      else this.message = "No other active tab in this workspace";
+      this.choosingAgent = !this.choosingAgent; this.agentIndex = 0;
+    } else if (gate.action === "changes" && this.lastAgentTerminal) {
+      this.bindIdentity(focused(), true);
+      if (!this.pane || focused()?.pane !== this.pane) return;
+      const origin = { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId, session: `${this.instanceId}-${Date.now()}-${Math.random()}`, terminal: this.lastAgentTerminal };
+      const id = openOverlay({ mod: "sekai-changes", kind: "dialog", width: 0.78, height: 0.8, props: { terminal: this.lastAgentTerminal, origin } });
+      this.changesDialog = { ...origin, id };
+      setShared("sekai.changesOverlay", this.changesDialog);
     } else {
       const root = layout(), panel = find(root, "panel"), body = find(root, "panel-body");
       if (panel && body && find(body, gate.action)) {
@@ -84,6 +113,78 @@ export default class Sekai extends View {
       } else run("mod.open", { name: gate.action });
     }
     cx.notify();
+  }
+
+  localAgents() {
+    const space = this.worldId ?? focused()?.space ?? spaces().find(s => s.active)?.id;
+    return agents().filter(agent => agent.space === space && agent.address);
+  }
+
+  consumePortal(selection, cx) {
+    const request = shared("sekai.portalRequest");
+    if (!request || !this.pane || request.instanceId !== this.instanceId || request.pane !== this.pane || request.tab !== this.tabId || request.worldId !== this.worldId || request.expires < Date.now() || request.id === this.lastPortalRequest) return false;
+    if (selection?.tab !== this.tabId || selection.space !== this.worldId) return false;
+    const current = this.terminalDialog;
+    if (request.fromSession ? current?.session !== request.fromSession || (selection.pane !== this.pane && !(selection.pane == null && selection.terminal === current.terminal)) : selection.pane !== this.pane || current) return false;
+    const changes = this.changesDialog;
+    if (request.fromChangesSession ? changes?.session !== request.fromChangesSession : changes) return false;
+    this.lastPortalRequest = request.id;
+    if (request.action === "picker") {
+      if (current || changes) {
+        const origin = { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId, fromSession: current?.session ?? null, ...(changes ? { fromChangesSession: changes.session } : {}) };
+        const count = this.localAgents().length;
+        openOverlay({ mod: "sekai", kind: "dialog", width: 400, height: 1.25 * (96 + Math.min(Math.max(count, 1) * 36, 144)), props: { role: "agent-picker", origin } });
+        return false;
+      }
+      this.choosingAgent = !this.choosingAgent;
+      this.agentIndex = 0;
+      this.keys.clear(); this.focusAttempts = 1;
+      cx.notify();
+      return false;
+    }
+    const agent = request.action === "open" ? this.localAgents().find(a => a.address === request.terminal) : null;
+    if (request.action !== "return" && !agent) return false;
+    if (current) { closeOverlay(current.id); this.terminalDialog = null; }
+    if (changes) { closeOverlay(changes.id); this.changesDialog = null; }
+    if (agent) this.openAgent(agent, cx);
+    else { this.focusAttempts = 1; cx.notify(); }
+    return true;
+  }
+
+  showAgent(agent, cx) {
+    if (!agent || !this.localAgents().some(a => a.address === agent.address)) return;
+    const origin = focused();
+    this.bindIdentity(origin, true);
+    if (!this.pane || origin?.pane !== this.pane || origin.tab !== this.tabId) return;
+    this.openAgent(agent, cx);
+  }
+
+  openAgent(agent, cx) {
+    this.lastAgentTerminal = agent.address;
+    this.choosingAgent = false; this.keys.clear();
+    const session = `${this.instanceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const overlay = openOverlay({
+      kind: "dialog", modal: true, width: 0.52, height: 0.76,
+      layout: { type: "column", children: [
+        { type: "block", size: { px: 34 }, content: { mod: "sekai", props: { role: "terminal-title", label: agent.pane_name || agent.tab_name || agent.title, origin: { pane: this.pane, tab: this.tabId, worldId: this.worldId, instanceId: this.instanceId, overlaySession: session, terminal: agent.address } } } },
+        { type: "block", content: { terminal: agent.address } }
+      ] }
+    });
+    this.terminalDialog = { id: overlay, session, terminal: agent.address };
+    setShared("sekai.terminalOverlay", { ...this.terminalDialog, pane: this.pane, tab: this.tabId, worldId: this.worldId, instanceId: this.instanceId });
+    cx.notify();
+  }
+
+  close() {
+    if (this.picker && this.pickerAction) {
+      setShared("sekai.portalRequest", { ...this.picker.origin, ...this.pickerAction, id: `${Date.now()}-${Math.random()}`, expires: Date.now() + 2000 });
+    }
+    if (this.title?.origin?.pane) {
+      const active = shared("sekai.terminalOverlay");
+      if (active?.session !== this.title.origin.overlaySession) return;
+      setShared("sekai.terminalOverlay", null);
+      setShared("sekai.focusRequest", { id: `${Date.now()}-${Math.random()}`, ...this.title.origin, expires: Date.now() + 1000 });
+    }
   }
 
   direction() {
@@ -98,8 +199,52 @@ export default class Sekai extends View {
     this.shiftHeld = shift;
   }
 
+  chooseAgent(agent, cx) {
+    if (!agent || !this.localAgents().some(a => a.address === agent.address)) return;
+    if (this.picker) {
+      this.pickerAction = { action: "open", terminal: agent.address };
+      closeOverlay(props().overlay);
+    } else this.showAgent(agent, cx);
+  }
+
+  pickerKey(e, cx) {
+    if (e.modifiers?.control || e.modifiers?.alt || e.modifiers?.platform) return;
+    const list = this.localAgents();
+    if (["escape", "q", "e", "enter", "up", "down", "w", "s"].includes(e.key) || /^[1-9]$/.test(e.key)) {
+      cx.stop_propagation();
+      if (e.key === "escape" || (e.key === "q" && !this.picker)) {
+        if (this.picker) closeOverlay(props().overlay);
+        else this.choosingAgent = false;
+      } else if (e.key === "q" && this.picker) {
+        this.pickerAction = { action: "return" };
+        closeOverlay(props().overlay);
+      } else if (/^[1-9]$/.test(e.key) && !e.is_held) this.chooseAgent(list[Number(e.key)-1], cx);
+      else if (["e", "enter"].includes(e.key) && !e.is_held) this.chooseAgent(list[Math.min(this.agentIndex, list.length - 1)], cx);
+      else if (["up", "w", "down", "s"].includes(e.key) && list.length) this.agentIndex = (this.agentIndex + list.length + (["up", "w"].includes(e.key) ? -1 : 1)) % list.length;
+      cx.notify();
+    }
+  }
+
   key(e, cx) {
-    if (!controls.has(e.key) || e.modifiers?.control || e.modifiers?.alt || e.modifiers?.platform) return;
+    if (e.keystroke === "ctrl-e" && !e.is_held) {
+      cx.stop_propagation();
+      this.bindIdentity(focused(), true);
+      this.choosingAgent = !this.choosingAgent;
+      this.agentIndex = 0;
+      this.keys.clear();
+      cx.notify();
+      return;
+    }
+    if (e.modifiers?.control || e.modifiers?.alt || e.modifiers?.platform) return;
+    this.bindIdentity(focused(), true);
+    if (e.key === "escape" && this.terminalDialog && focused()?.pane === this.pane) {
+      cx.stop_propagation();
+      closeOverlay(this.terminalDialog.id);
+      this.terminalDialog = null;
+      return;
+    }
+    if (this.choosingAgent) { this.pickerKey(e, cx); return; }
+    if (!controls.has(e.key)) return;
     cx.stop_propagation();
     this.inputPane = focused()?.pane;
     this.message = "Explore the mountain";
@@ -162,12 +307,33 @@ export default class Sekai extends View {
     else cx.timer.after(30, cx => this.tick(cx));
   }
 
+  renderPicker(root, list) {
+    return root.bg("#17223d").border_1().border_color("#8cabc9").p(12).flex().flex_col().gap(6).text_size(13).text_color("#e8eaff")
+      .font_family("PxPlus IBM VGA 8x16")
+      .child("AGENT VILLAGE   1–9 OPEN · ↑ ↓ / E · ESC BACK")
+      .child(div().flex_1().min_h(0).overflow_y_scrollbar().children(list.map((agent,i) => div().id(`agent-${agent.address}`).px(8).py(6)
+        .bg(i === Math.min(this.agentIndex,list.length-1) ? "#50638b" : "#293655").cursor_pointer()
+        .on_click((_e,cx) => this.chooseAgent(agent,cx)).child(`${i < 9 ? `${i+1}  ` : ""}${agent.tab_name} / ${agent.pane_name || agent.app || agent.title} · ${agent.status}`))))
+      .when(!list.length, el => el.child("No agents in this workspace"))
+      .child(div().id("return-world").cursor_pointer().on_click((_e,cx) => this.pickerKey({ key: "q" }, cx)).child("Q · RETURN TO WORLD"));
+  }
+
   render() {
+    if (this.picker) return this.renderPicker(div().id("sekai-agent-picker").size_full().track_focus(this.handle).on_key_down((e,cx) => this.pickerKey(e,cx)), this.localAgents());
+    if (this.title) return div().size_full().flex().items_center().justify_between().px(10).bg("#252e47")
+      .font_family("PxPlus IBM VGA 8x16").text_color("#e8eaff").text_size(14)
+      .child(`AGENT / ${this.title.label ?? "Terminal"}`)
+      .child(div().id("close-terminal").px(12).cursor_pointer().bg("#4a3557").on_mouse_down("left", (_e,cx) => cx.stop_propagation())
+        .on_click((_e,cx) => { cx.stop_propagation(); closeOverlay(props().overlay); }).child("× CLOSE"));
     const scale = Math.min(this.size.width / W, this.size.height / H);
     const place = (x,y,w,h) => div().absolute().left(x*scale).top(y*scale).w(w*scale).h(h*scale);
     const near = this.near();
     const current = spaces().find(s => s.active);
+    const list = this.choosingAgent ? this.localAgents() : [];
+    const pickerWidth = Math.min(W * scale, 400);
+    const pickerHeight = Math.min(H * scale, 1.25 * (96 + Math.min(Math.max(list.length, 1) * 36, 144)));
     return div().id("sekai").size_full().flex().items_center().justify_center().bg("#131a32")
+      .font_family("PxPlus IBM VGA 8x16")
       .track_focus(this.handle)
       .on_mouse_down("left", (_e, cx) => { this.handle.focus(); cx.stop_propagation(); cx.notify(); })
       .on_click((_e, cx) => { this.handle.focus(); cx.notify(); })
@@ -189,6 +355,7 @@ export default class Sekai extends View {
           .child(`SEKAI  /  ${current?.name ?? "Mountain"}`).child("← → move  ↑ jump  ↓ drop  X/Shift dash  E enter"))
 
         .child(place(0,170,320,9).flex().justify_center().items_center().text_size(5*scale).text_color("#f9e1b7")
-          .child(near ? `E · ${near.title}` : this.message)));
+          .child(near ? `E · ${near.title}` : this.message))
+        .when(this.choosingAgent, el => el.child(this.renderPicker(div().absolute().left((W*scale-pickerWidth)/2).top((H*scale-pickerHeight)/2).w(pickerWidth).h(pickerHeight), list))));
   }
 }

@@ -3,10 +3,10 @@
 ## Current prototype
 
 - Native Herdr mod tab with a pixel-art platformer, directional movement, double dash and replaceable character sprites.
-- Git and Files gates toggle Herdr's native side panels.
+- Files gate toggles Herdr's native side panel. Git uses the ordinary Changes panel before selecting an agent; afterward the gate opens the `sekai-changes` companion dialog scoped to the world's last embedded terminal address. It resolves the live model-pane cwd and machine, reuses Herdr worktree discovery and Git UI, and reports unavailable targets rather than falling back to a different repository. Live GUI/remote verification is pending.
 - Workspace gate opens the existing Ctrl-Space navigation menu.
 - Ctrl-Space → Escape now returns keyboard focus to the same Sekai pane (user confirmed live). This workaround requires the companion dotfiles-macos `tab-prefix` mod to publish `sekai.focusRequest` with the target pane, tab, unique ID and one-second expiry. Tab-selection and other-overlay focus restoration remain upstream limitations.
-- Agent gate currently selects another tab in the current workspace; this leaves Sekai.
+- Agent gate opens a local agent picker. Select an agent to open its original live terminal in a native Herdr floating dialog layout, without selecting its source tab. Herdr's dialog path requests terminal focus automatically; live focus restoration remains to be verified.
 
 ## Architecture decision: shared engine, independent worlds
 
@@ -15,13 +15,14 @@
 - Character position, local agent selection, workspace context and panel state remain independent per instance.
 - The workspace gate connects worlds through the existing Ctrl-Space menu; Git, Files and agents remain scoped to the local workspace.
 - No separate server initially. Consider a shared service only when cross-machine synchronization, persistent character identities or shared world events require it.
-- Verify that all existing instances receive code updates without requiring manual recreation and preserve independent state where appropriate.
+- Each world view has a fresh instance ID; its Herdr workspace ID identifies the world, and its pane/tab IDs identify its focus target. An explicit `worldId` or `pane` prop can pre-bind identity; otherwise unique panes bind automatically and ambiguous views bind when their own keyboard handler receives input. Overlay IDs and session IDs are tracked independently of the live agent terminal address. Close-focus requests from agent overlays include the originating instance and session; older tab-prefix requests remain pane/tab scoped.
+- Verify that all existing instances receive code updates without requiring manual recreation and preserve independent state where appropriate. Current Herdr does not expose an overlay-specific terminal key context, so Escape can close the tracked dialogue only if the Sekai world receives the event; when the embedded terminal itself has focus, Escape is still terminal input. Do not globally rebind Escape.
 
 ## Backlog: persistent in-world agent workflow
 
-- Replace the cycling agent gate with a village of agents tied to their actual Herdr session identities. Interact with a specific agent rather than an arbitrary next tab.
-- Keep Sekai visible when opening an agent. Prefer embedding or revealing its existing interactive terminal alongside the world without moving it or switching its original tab.
-- Investigate Herdr's supported live terminal composition API and the Orrery layout precedent. Verify terminal ownership, focus, input, resize and whether a terminal can be displayed from another tab.
+- E at the right gate presents a workspace-scoped picker keyed by agent terminal address. E/Enter opens the selected terminal using Herdr's documented native `openOverlay` layout API, with a close control. This first implementation is a floating dialog, not an inline split. The modal dialog does not close on outside clicks. Ctrl-Space retains Herdr's ordinary tab portal in all contexts. Ctrl-E is reserved globally for Sekai by explicit user approval (ordinary terminal Ctrl-E no longer moves the cursor to the end of a line). The companion dotfiles-macos `sekai-bridge` captures the exact world/embedded overlay context and requests the same Sekai agent picker: 1–9 switch agents, q returns to the world. Outside Sekai the bridge is a no-op. The explicit Close button remains available. Live Ctrl-E routing still needs verification. Exact world/instance/pane/tab/session IDs and request expiry guard against stale selections. Plain Escape remains terminal input. Live cross-mod integration requires verification.
+- Verify actual live terminal input, resizing, close/focus restoration, and that the source pane remains in its original tab, including when switching workspaces.
+- Evolve the picker into an in-world village of agent characters and investigate inline side-by-side composition without changing the user's global layout.
 - If native terminal embedding is unavailable, investigate Pi session APIs (including MCP where appropriate) for an in-world dialogue/chat interface. A custom xterm/Ghostty rendering layer is a fallback, not a requirement.
 - Support opening and collapsing the selected agent interaction, preserving session state and returning keyboard focus to the world.
 - Future: agent-specific hot-swappable Term-chan/Haremizer character assets and dialogue bubbles.

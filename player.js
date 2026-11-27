@@ -30,7 +30,6 @@ export const player = {
     this.bindIdentity(focused(), true);
     if (e.key === "escape" && this.terminalDialog && focused()?.pane === this.pane) {
       cx.stop_propagation();
-      if (this.commandPreview?.address === this.terminalDialog.terminal) this.commandPreview = null;
       closeOverlay(this.terminalDialog.id);
       this.terminalDialog = null;
       return;
@@ -104,6 +103,7 @@ export const player = {
   },
 
   tick(cx) {
+    if (this.terminalDialog || this.changesDialog) { this.keys.clear(); this.running = false; return; }
     if (focused()?.pane !== this.inputPane || !this.handle.is_focused() || window()?.visible === false) this.keys.clear();
     const [dx] = this.direction();
     const dashing = this.dashTicks > 0;

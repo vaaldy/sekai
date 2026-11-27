@@ -1,62 +1,9 @@
 import { div } from "gpui-kit";
-import { agents as herdrAgents, closeOverlay, focused, hc, home, openOverlay, panes, props, run, setShared, shared, spaces } from "herdr";
+import { agents as herdrAgents, closeOverlay, focused, home, openOverlay, panes, props, run, setShared, shared, spaces } from "herdr";
 
 const COMMAND_TAB = "Sekai Command";
 const COMMAND_TASK = "Read skills/sekai-world-builder/SKILL.md and stand by as the Sekai Command Center world-builder agent. Wait for my world editing instructions.";
 
-
-const TURN_STAT = /^(Read|Edited|Ran|Wrote|Created)\b.*·\s*\d+[smh]/;
-const NOISE = /^(?:[─━═\-]{4,}|[╭╰│].*[╮╯│]|(?:🔌\s*MCP:|~\S+\s+\(|↑\d|\$\d+\.\d+).*)$/;
-
-function classifyLine(text) {
-  if (text.startsWith("◆")) return "tool";
-  if (text.startsWith("↳")) return "subtool";
-  if (/^✗|\b(error|failed|exception)\b/i.test(text)) return "error";
-  if (/^✓|\b(passed|succeeded)\b/i.test(text)) return "ok";
-  if (/^(#{1,3}\s|[-•]\s)/.test(text)) return "accent";
-  return "text";
-}
-
-export function parsePreviewLines(stdout, limit = 5) {
-  const clean = (stdout || "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
-  let lines = clean.split(/\r?\n/).map(line => line.trim());
-  while (lines.length && (!lines.at(-1) || lines.at(-1).startsWith("[hc]"))) lines.pop();
-  // Strip Pi's bottom editor box and status footer.
-  const dividers = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (/^─{8,}/.test(lines[i]) || /^── .*─{6,}/.test(lines[i])) dividers.push(i);
-  }
-  if (dividers.length >= 2 && lines.length - dividers.at(-1) <= 6) lines = lines.slice(0, dividers.at(-2));
-  else if (dividers.length >= 1 && lines.length - dividers.at(-1) <= 6) lines = lines.slice(0, dividers.at(-1));
-  const filtered = lines.map(line => (!line || NOISE.test(line) || /[▀▄█▌▐░▒▓]{4,}/.test(line)) ? "" : line);
-  while (filtered.length && !filtered.at(-1)) filtered.pop();
-  if (filtered.length > 1 && TURN_STAT.test(filtered.at(-1))) {
-    filtered.pop();
-    while (filtered.length && !filtered.at(-1)) filtered.pop();
-  }
-  let lastTool = -1, lastStat = -1;
-  for (let i = 0; i < filtered.length; i++) {
-    if (filtered[i].startsWith("◆") || filtered[i].startsWith("↳")) lastTool = i;
-    if (TURN_STAT.test(filtered[i])) lastStat = i;
-  }
-  const hasResponseAfterTool = lastTool >= 0 && filtered.slice(lastTool + 1).some(Boolean);
-  let block;
-  if (lastTool >= 0 && !hasResponseAfterTool) {
-    let start = lastTool;
-    while (start > 0 && (filtered[start - 1].startsWith("◆") || filtered[start - 1].startsWith("↳") || !filtered[start - 1])) start--;
-    block = filtered.slice(start).filter(Boolean);
-  } else if (lastTool >= 0 || lastStat >= 0) {
-    block = filtered.slice(Math.max(lastTool, lastStat) + 1).filter(Boolean);
-  } else {
-    let start = filtered.length - 1;
-    while (start > 0 && filtered[start - 1]) start--;
-    block = filtered.slice(start).filter(Boolean);
-  }
-  return block.slice(-limit).map(line => {
-    const text = line.length > 96 ? `${line.slice(0, 95)}…` : line;
-    return { text, kind: classifyLine(text) };
-  });
-}
 
 export const agentMethods = {
   findCommandAgent() {
@@ -81,7 +28,18 @@ export const agentMethods = {
     const existing = this.findCommandAgent();
     if (existing) {
       this.pendingCommandCenter = 0;
-      this.openAgent(existing, cx);
+      this.keys.clear();
+      setShared("sekai.portalRequest", {
+        id: `${Date.now()}-${Math.random()}`,
+        instanceId: this.instanceId,
+        pane: this.pane,
+        tab: this.tabId,
+        worldId: this.worldId,
+        fromSession: this.terminalDialog?.session ?? null,
+        action: "open",
+        terminal: existing.address,
+        expires: Date.now() + 2000,
+      });
       return;
     }
     if (!this.pendingCommandCenter || Date.now() > this.pendingCommandCenter) {
@@ -90,36 +48,6 @@ export const agentMethods = {
     }
     this.message = "Starting Sekai Command Center...";
     cx.notify();
-  },
-
-  refreshCommandPreview(cx) {
-    const agent = this.findCommandAgent();
-    if (!agent) {
-      if (this.commandPreview) { this.commandPreview = null; cx.notify(); }
-      return;
-    }
-    // Event-driven: read once per status transition (plus one follow-up on working), never poll continuously.
-    const stateKey = `${agent.address}:${agent.status ?? "unknown"}`;
-    const now = Date.now();
-    const sameState = this.commandPreview?.stateKey === stateKey;
-    const allowFollowUp = agent.status === "working" && !this.commandPreview?.workingFetched && now - (this.previewAt ?? 0) >= 2500;
-    if (this.previewInFlight || (sameState && !allowFollowUp)) return;
-    this.previewInFlight = true;
-    this.previewAt = now;
-    const address = agent.address;
-    const isWorking = agent.status === "working";
-    cx.spawn(async cx => {
-      try {
-        const r = await hc(["read", "--lines", "30", address]).catch(() => null);
-        if (this.terminalDialog?.terminal === address) return;
-        if (r && r.code === 0) {
-          this.commandPreview = { address, stateKey, workingFetched: isWorking && sameState, lines: parsePreviewLines(r.stdout, 5) };
-        }
-      } finally {
-        this.previewInFlight = false;
-        if (!this.terminalDialog) cx.notify();
-      }
-    });
   },
 
   localAgents() {
@@ -161,7 +89,6 @@ export const agentMethods = {
     if (request.action !== "return" && request.action !== "git" && !agent) return false;
     if (request.action === "git" && !this.lastAgentTerminal) return false;
     if (current) {
-      if (this.commandPreview?.address === current.terminal) this.commandPreview = null;
       closeOverlay(current.id);
       this.terminalDialog = null;
     }
@@ -188,6 +115,8 @@ export const agentMethods = {
     this.lastAgentTerminal = agent.address;
     this.choosingAgent = false; this.keys.clear();
     this.pendingCommandCenter = 0;
+    this.focusAttempts = 0;
+    this.running = false;
     const session = `${this.instanceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const overlay = openOverlay({
       kind: "dialog", modal: true, width: 0.52, height: 0.76,

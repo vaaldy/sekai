@@ -1,5 +1,5 @@
 import { div, image } from "gpui-kit";
-import { focused, layout, openOverlay, run, setShared, settings, spaces, theme } from "herdr";
+import { focused, layout, openOverlay, run, setShared, settings, spaces } from "herdr";
 
 import { sekaiAssetCatalog, sekaiAssetPath, sekaiFrames, sekaiWorldDefinition, validateSekaiWorld } from "./world-data.js";
 
@@ -60,11 +60,6 @@ function find(node, id) {
 
 export const world = {
   near() { return gates.find(g => Math.abs(g.x - this.x) <= 14 && Math.abs(g.y - this.y) <= 5); },
-
-  nearCommandPreview() {
-    const g = gates.find(entry => entry.action === "command");
-    return g && Math.abs(g.x - this.x) <= 64 && Math.abs(g.y - this.y) <= 32 ? g : null;
-  },
 
   activate(gate, cx) {
     this.keys.clear();
@@ -176,15 +171,7 @@ export const world = {
       const frame = Math.floor(now / flock.flapMs + ph) % 2;
       return { id: `${flock.kind}-${i}`, x, y, asset: `wildlife.bird.${flock.kind}.${frame}` };
     }).filter(b => b.x >= bgX - 16 && b.x <= bgX + W / z + 16 && b.y >= bgY - 12 && b.y <= bgY + H / z + 12);
-    const cmdAgent = this.findCommandAgent();
-    const cmdGate = !this.choosingAgent && !this.terminalDialog && !this.changesDialog ? this.nearCommandPreview() : null;
-    const cmdWorking = cmdAgent?.status === "working";
-    const t = theme();
-    const cmdColor = { working: t.working, blocked: t.blocked, done: t.done, idle: t.muted }[cmdAgent?.status] ?? t.dim;
-    const lineColor = { tool: t.ansi6 ?? t.accent, subtool: t.muted, error: t.ansi1 ?? t.blocked, ok: t.ansi2 ?? t.done, accent: t.ansi3 ?? t.accent, text: t.foreground };
-    const cmdLines = cmdAgent && this.commandPreview?.address === cmdAgent.address
-      ? (this.commandPreview.lines.length ? this.commandPreview.lines : [{ text: `Ready (${cmdAgent.status ?? "idle"})`, kind: "subtool" }])
-      : [{ text: cmdAgent ? "Reading terminal…" : "Offline · press E to start", kind: "subtool" }];
+    const cmdWorking = this.findCommandAgent()?.status === "working";
     const current = spaces().find(s => s.active);
     const list = this.choosingAgent ? this.localAgents() : [];
     const pickerWidth = Math.min(W * scale, 400);
@@ -254,12 +241,6 @@ export const world = {
               .child(div().id("cmd-pulse-c").absolute().left(9*unit).top(8*unit).w(2*unit).h(2*unit).bg("#b894ff").loop("opacity", { from: 0.1, to: 1, period: 610 }))
               .child(div().id("cmd-pulse-d").absolute().left(7*unit).top(10*unit).w(2*unit).h(2*unit).bg("#67e0d4").loop("opacity", { from: 0.1, to: 1, period: 830 }))
               .child(div().id("cmd-pulse-e").absolute().left(11*unit).top(10*unit).w(2*unit).h(2*unit).bg("#9cf5e8").loop("opacity", { from: 0.1, to: 1, period: 460 }))))))
-        .when(Boolean(cmdGate), el => el.child(scene(cmdGate.x-66,cmdGate.y-82,132,52).bg(t.background).opacity(.95).border(unit).border_color(cmdColor).p(3*unit).flex().flex_col().gap(1.5*unit).overflow_hidden()
-          .child(div().w_full().flex().items_center().justify_between().text_size(3.8*unit).font_bold().text_color(cmdColor)
-            .child(`COMMAND · ${(cmdAgent?.status ?? "offline").toUpperCase()}`)
-            .child(div().text_color(t.muted).child("E OPEN")))
-          .child(div().w_full().min_w(0).flex().flex_col().gap(unit).text_size(3.4*unit)
-            .children(cmdLines.map(line => div().w_full().truncate().text_color(lineColor[line.kind] ?? t.foreground).child(line.text))))))
         .children(this.trail.map((p,i) => sprite(`character.default.dash.${this.facing < 0 ? "left" : "right"}.0`, p.x-8, p.y-24, 16, 24).opacity(0.45-i*0.1)))
         .child(sprite(`character.default.${this.pose}.${this.facing < 0 ? "left" : "right"}.${Math.floor(this.frame/3)%sekaiFrames[this.pose]}`, this.x-8, this.y-24, 16, 24))
         .when(this.swingTicks > 0, el => {

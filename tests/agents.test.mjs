@@ -7,7 +7,7 @@ const spaces=[{id:'w',tabs:[{id:'t',name:'One'}]},{id:'foreign',tabs:[{id:'other
 const native=[{address:'t1',space:'w'},{address:'foreign/t',space:'foreign'}];
 async function run(agents,source) {
  const context=vm.createContext({});
- const api={agents,panes:()=>panes,spaces:()=>spaces,focused:()=>({space:'w'}),hc:async()=>({code:0,stdout:''}),home:()=>'/tmp',run(){},closeOverlay(){},openOverlay(){},props(){},setShared(){},shared(){}};
+ const api={agents,panes:()=>panes,spaces:()=>spaces,focused:()=>({space:'w'}),home:()=>'/tmp',run(){},closeOverlay(){},openOverlay(){},props(){},setShared(){},shared(){}};
  function host(name,exports){return new vm.SyntheticModule(Object.keys(exports),function(){for(const[k,v] of Object.entries(exports))this.setExport(k,v)},{context,identifier:name});}
  const h=host('herdr',api),g=host('gpui-kit',{div(){}}), m=new vm.SourceTextModule(source,{context});
  m.linkRequests(m.moduleRequests.map(r=>r.specifier==='herdr'?h:g));m.instantiate();await m.evaluate();

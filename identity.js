@@ -48,17 +48,11 @@ export const identity = {
         }
       }
     }
-    if (active && !this.terminalDialog && !this.changesDialog && this.nearCommandPreview?.()) {
-      this.refreshCommandPreview(cx);
-    }
     if (this.consumePortal(selection, cx)) { this.wasActive = false; return; }
     const request = shared("sekai.focusRequest");
     if (active && request?.pane === this.pane && request.tab === selection.tab && (!request.instanceId || request.instanceId === this.instanceId) && request.expires >= Date.now() && request.id !== this.lastFocusRequest) {
       this.lastFocusRequest = request.id;
-      if (request.overlaySession === this.terminalDialog?.session) {
-        if (this.commandPreview?.address === this.terminalDialog?.terminal) this.commandPreview = null;
-        this.terminalDialog = null;
-      }
+      if (request.overlaySession === this.terminalDialog?.session) this.terminalDialog = null;
       if (request.changesSession === this.changesDialog?.session) this.changesDialog = null;
       if (!this.terminalDialog && !this.changesDialog) this.focusAttempts = 1;
     }

@@ -1,6 +1,7 @@
 import { View, div } from "gpui-kit";
 import { checking, closeOverlay, focused, nextCommand, props } from "herdr";
 import { world } from "./world.js";
+import { sekaiWorldDefinition } from "./world-data.js";
 import { player } from "./player.js";
 import { agentMethods } from "./agents.js";
 import { identity } from "./identity.js";
@@ -18,9 +19,10 @@ export default class Sekai extends View {
       return;
     }
     this.size = { width: 640, height: 360 };
-    this.x = 160; this.y = 166; this.vy = 0; this.ground = true;
+    [this.x, this.y] = sekaiWorldDefinition.spawn; this.vy = 0; this.ground = true;
+    this.camera = null;
     this.facing = 1; this.pose = "idle"; this.frame = 0;
-    this.dashes = 2; this.dashTicks = 0; this.trail = [];
+    this.jumps = 2; this.dashes = 2; this.dashTicks = 0; this.trail = [];
     this.choosingAgent = false; this.agentIndex = 0;
     this.keys = new Set(); this.running = false; this.message = "Click the world to take control";
     this.instanceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;

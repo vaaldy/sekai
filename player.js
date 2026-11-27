@@ -1,5 +1,5 @@
 import { focused, closeOverlay, window } from "herdr";
-import { W, platforms } from "./world.js";
+import { WORLD_W, FLOOR, platforms } from "./world.js";
 
 const controls = new Set(["left", "right", "up", "down", "a", "d", "w", "s", "space", "e", "enter", "x", "shift"]);
 
@@ -52,10 +52,11 @@ export const player = {
       this.dashTicks = 7; this.dashes--; this.ground = false;
       if (dx) this.facing = Math.sign(dx);
     }
-    if (!e.is_held && ["up", "w", "space"].includes(e.key) && this.ground && !this.dashTicks) {
+    if (!e.is_held && ["up", "w", "space"].includes(e.key) && this.jumps > 0) {
+      this.jumps--; this.dashTicks = 0;
       this.vy = -8.6; this.ground = false;
     }
-    if (!e.is_held && ["down", "s"].includes(e.key) && this.ground && this.y < 166 && !this.dashTicks) {
+    if (!e.is_held && ["down", "s"].includes(e.key) && this.ground && this.y < FLOOR && !this.dashTicks) {
       this.y += 1; this.ground = false;
     }
     if (!this.running) { this.running = true; this.tick(cx); }
@@ -75,7 +76,7 @@ export const player = {
       this.vy += 0.62;
       if (dx) this.facing = Math.sign(dx);
     }
-    this.x = Math.max(8, Math.min(W - 8, this.x + (dashing ? this.dashX : dx * 2.7)));
+    this.x = Math.max(8, Math.min(WORLD_W - 8, this.x + (dashing ? this.dashX : dx * 2.7)));
     const oldY = this.y;
     this.y = Math.max(24, this.y + this.vy);
     if (this.y === 24 && this.vy < 0) { this.vy = 0; this.dashTicks = 0; }
@@ -86,15 +87,16 @@ export const player = {
       if (surface) {
         this.y = surface[2]; this.vy = 0; this.ground = true;
         if (this.dashY > 0) this.dashTicks = 0;
-        if (!this.dashTicks) this.dashes = 2;
+        if (!this.dashTicks) { this.jumps = 2; this.dashes = 2; }
       }
     }
     if (dashing && !this.dashTicks && !this.ground) this.vy = 0;
     const pose = dashing ? "dash" : !this.ground ? (this.vy < 0 ? "jump" : "fall") : dx ? "run" : "idle";
     this.frame = pose === this.pose ? this.frame + 1 : 0;
     this.pose = pose;
+    const movingCamera = this.updateCamera(cx);
     cx.notify();
-    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle") this.running = false;
+    if (this.ground && !dx && !this.dashTicks && !this.trail.length && this.pose === "idle" && !movingCamera) this.running = false;
     else cx.timer.after(30, cx => this.tick(cx));
   }
 };

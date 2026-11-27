@@ -1,4 +1,4 @@
-import { focused, panes, setShared, shared, spaces, window } from "herdr";
+import { closeOverlay, focused, panes, setShared, shared, spaces, window } from "herdr";
 
 
 export const identity = {
@@ -8,15 +8,25 @@ export const identity = {
     const candidates = panes().filter(p => p.mod === "sekai" && (!tabs || tabs.some(t => t.id === p.tab)));
     const own = this.pane ? candidates.find(p => p.pane === this.pane) : ownsInput ? candidates.find(p => p.pane === selection?.pane) : candidates.length === 1 ? candidates[0] : null;
     if (!own) return;
+    const prevWorld = this.worldId;
     this.pane = own.pane;
     this.tabId = own.tab;
     this.worldId = all.find(s => s.tabs.some(t => t.id === own.tab))?.id ?? this.worldId;
+    if (this.worldId !== prevWorld && this.loadStash) this.loadStash();
   },
 
   syncFocus(cx) {
     const selection = focused();
     this.bindIdentity(selection);
     const active = Boolean(this.pane && selection?.pane === this.pane && window()?.visible !== false);
+    if (this.terminalDialog && !active && !(selection?.pane == null && selection?.tab === this.tabId && selection?.terminal === this.terminalDialog.terminal)) {
+      closeOverlay(this.terminalDialog.id);
+      this.terminalDialog = null;
+    }
+    if (this.changesDialog && !active) {
+      closeOverlay(this.changesDialog.id);
+      this.changesDialog = null;
+    }
     if (active) {
       const context = shared("sekai.worldContext");
       if (context?.instanceId !== this.instanceId) setShared("sekai.worldContext", { instanceId: this.instanceId, pane: this.pane, tab: this.tabId, worldId: this.worldId });
@@ -45,7 +55,10 @@ export const identity = {
     const request = shared("sekai.focusRequest");
     if (active && request?.pane === this.pane && request.tab === selection.tab && (!request.instanceId || request.instanceId === this.instanceId) && request.expires >= Date.now() && request.id !== this.lastFocusRequest) {
       this.lastFocusRequest = request.id;
-      if (request.overlaySession === this.terminalDialog?.session) this.terminalDialog = null;
+      if (request.overlaySession === this.terminalDialog?.session) {
+        if (this.commandPreview?.address === this.terminalDialog?.terminal) this.commandPreview = null;
+        this.terminalDialog = null;
+      }
       if (request.changesSession === this.changesDialog?.session) this.changesDialog = null;
       if (!this.terminalDialog && !this.changesDialog) this.focusAttempts = 1;
     }

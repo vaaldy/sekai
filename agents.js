@@ -98,20 +98,26 @@ export const agentMethods = {
       if (this.commandPreview) { this.commandPreview = null; cx.notify(); }
       return;
     }
+    // Event-driven: read once per status transition (plus one follow-up on working), never poll continuously.
+    const stateKey = `${agent.address}:${agent.status ?? "unknown"}`;
     const now = Date.now();
-    if (this.previewInFlight || (this.commandPreview?.address === agent.address && now - (this.previewAt ?? 0) < 1500)) return;
+    const sameState = this.commandPreview?.stateKey === stateKey;
+    const allowFollowUp = agent.status === "working" && !this.commandPreview?.workingFetched && now - (this.previewAt ?? 0) >= 2500;
+    if (this.previewInFlight || (sameState && !allowFollowUp)) return;
     this.previewInFlight = true;
     this.previewAt = now;
     const address = agent.address;
+    const isWorking = agent.status === "working";
     cx.spawn(async cx => {
       try {
         const r = await hc(["read", "--lines", "30", address]).catch(() => null);
+        if (this.terminalDialog?.terminal === address) return;
         if (r && r.code === 0) {
-          this.commandPreview = { address, lines: parsePreviewLines(r.stdout, 5) };
+          this.commandPreview = { address, stateKey, workingFetched: isWorking && sameState, lines: parsePreviewLines(r.stdout, 5) };
         }
       } finally {
         this.previewInFlight = false;
-        cx.notify();
+        if (!this.terminalDialog) cx.notify();
       }
     });
   },
@@ -154,7 +160,11 @@ export const agentMethods = {
     if (request.action === "git" && changes) return false;
     if (request.action !== "return" && request.action !== "git" && !agent) return false;
     if (request.action === "git" && !this.lastAgentTerminal) return false;
-    if (current) { closeOverlay(current.id); this.terminalDialog = null; }
+    if (current) {
+      if (this.commandPreview?.address === current.terminal) this.commandPreview = null;
+      closeOverlay(current.id);
+      this.terminalDialog = null;
+    }
     if (changes) { closeOverlay(changes.id); this.changesDialog = null; }
     if (agent) this.openAgent(agent, cx);
     else if (request.action === "git") { this.openChanges(); cx.notify(); }
@@ -171,8 +181,13 @@ export const agentMethods = {
   },
 
   openAgent(agent, cx) {
+    if (this.terminalDialog) {
+      closeOverlay(this.terminalDialog.id);
+      this.terminalDialog = null;
+    }
     this.lastAgentTerminal = agent.address;
     this.choosingAgent = false; this.keys.clear();
+    this.pendingCommandCenter = 0;
     const session = `${this.instanceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const overlay = openOverlay({
       kind: "dialog", modal: true, width: 0.52, height: 0.76,
